@@ -60,15 +60,8 @@ namespace NaughtyAttributes.Editor
 
         public static SpecialCasePropertyDrawerBase GetDrawer(this SpecialCaseDrawerAttribute attr)
         {
-            SpecialCasePropertyDrawerBase drawer;
-            if (_drawersByAttributeType.TryGetValue(attr.GetType(), out drawer))
-            {
+            _drawersByAttributeType.TryGetValue(attr.GetType(), out var drawer);
                 return drawer;
             }
-            else
-            {
-                return null;
-            }
-        }
     }
 }

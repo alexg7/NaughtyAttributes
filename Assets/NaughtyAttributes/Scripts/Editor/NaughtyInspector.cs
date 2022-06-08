@@ -16,6 +16,8 @@ namespace NaughtyAttributes.Editor
         private IEnumerable<MethodInfo> _methods;
         private Dictionary<string, SavedBool> _foldouts = new Dictionary<string, SavedBool>();
 
+        private readonly Dictionary<string, PropertyDrawer> _drawersByPropertyName = new Dictionary<string, PropertyDrawer>();
+
         protected virtual void OnEnable()
         {
             _nonSerializedFields = ReflectionUtility.GetAllFields(
@@ -30,7 +32,35 @@ namespace NaughtyAttributes.Editor
 
         protected virtual void OnDisable()
         {
+            ClearCache();
             ReorderableListPropertyDrawer.Instance.ClearCache();
+        }
+
+        public void ClearCache()
+        {
+            _drawersByPropertyName.Clear();
+        }
+
+        private string GetPropertyKeyName(SerializedProperty property)
+        {
+            return property.serializedObject.targetObject.GetInstanceID() + "." + property.propertyPath; //property.name;
+        }
+
+        private PropertyDrawer GetItemDrawer(SerializedProperty property)
+        {
+            if (property.propertyType != SerializedPropertyType.Generic)
+                return null;
+
+            string key = GetPropertyKeyName(property);
+
+            if (!_drawersByPropertyName.TryGetValue(key, out PropertyDrawer drawer))
+            {
+                var type = property.GetPropertyFieldType();
+                drawer = new NestedPropertyDrawer(type);
+                _drawersByPropertyName.Add(key, drawer);
+            }
+
+            return drawer;
         }
 
         public override void OnInspectorGUI()
@@ -84,7 +114,42 @@ namespace NaughtyAttributes.Editor
                 }
                 else
                 {
-                    NaughtyEditorGUI.PropertyField_Layout(property, includeChildren: true);
+                    if (property.propertyType != SerializedPropertyType.Generic)
+                    {
+                        NaughtyEditorGUI.PropertyField_Layout(property, includeChildren: true);
+                    }
+                    else
+                    {
+                        var childrenProps = property.GetChildren();
+                        bool anyNaughtyAttribute = childrenProps.Any(p => PropertyUtility.GetAttribute<INaughtyAttribute>(p) != null);
+                        if (!anyNaughtyAttribute)
+                        {
+                            NaughtyEditorGUI.PropertyField_Layout(property, includeChildren: true);
+                        }
+                        else
+                        {
+                            //SpecialCaseDrawerAttribute specialCaseAttribute = PropertyUtility.GetAttribute<SpecialCaseDrawerAttribute>(property);
+                            //if (specialCaseAttribute != null)
+                            //{
+                            //    var specDrawer = specialCaseAttribute.GetDrawer();
+                            //    float h = specDrawer.GetPropertyHeight(property);
+                            //    Rect position = GUILayoutUtility.GetRect(1.0f, Screen.width, 1.0f, h);
+                            //    specDrawer.OnGUI(position, property);
+                            //}
+                            //else
+                            {
+                                var drawer = GetItemDrawer(property);
+                                if (drawer != null)
+                                {
+                                    NaughtyEditorGUI.PropertyFieldWithDrawer_Layout(property, drawer, true);
+                                }
+                                else
+                                {
+                                    NaughtyEditorGUI.PropertyField_Layout(property, includeChildren: true);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

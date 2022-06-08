@@ -2,6 +2,7 @@
 using UnityEditor;
 using UnityEditorInternal;
 using System.Collections.Generic;
+using System.Collections;
 
 namespace NaughtyAttributes.Editor
 {
@@ -9,10 +10,10 @@ namespace NaughtyAttributes.Editor
     {
         public static readonly ReorderableListPropertyDrawer Instance = new ReorderableListPropertyDrawer();
 
-        private readonly Dictionary<string, ReorderableList> _reorderableListsByPropertyName = new Dictionary<string, ReorderableList>();
+        private readonly Dictionary<string, ReorderableListWrapper> _reorderableListsByPropertyName = new Dictionary<string, ReorderableListWrapper>();
 
         private GUIStyle _labelStyle;
-
+        private GUIStyle _foldoutStyle;
         private GUIStyle GetLabelStyle()
         {
             if (_labelStyle == null)
@@ -24,9 +25,21 @@ namespace NaughtyAttributes.Editor
             return _labelStyle;
         }
 
+        private GUIStyle GetFoldoutStyle()
+        {
+            if (_foldoutStyle == null)
+            {
+                _foldoutStyle = new GUIStyle(EditorStyles.foldoutHeader);
+                _foldoutStyle.fontStyle = FontStyle.Bold;
+                _foldoutStyle.richText = true;
+            }
+
+            return _foldoutStyle;
+        }
+
         private string GetPropertyKeyName(SerializedProperty property)
         {
-            return property.serializedObject.targetObject.GetInstanceID() + "." + property.name;
+            return property.serializedObject.targetObject.GetInstanceID() + "." + property.propertyPath; //property.name;
         }
 
         protected override float GetPropertyHeight_Internal(SerializedProperty property)
@@ -35,63 +48,86 @@ namespace NaughtyAttributes.Editor
             {
                 string key = GetPropertyKeyName(property);
 
-                if (_reorderableListsByPropertyName.TryGetValue(key, out ReorderableList reorderableList) == false)
+                var reorderableList = GetOrCreateList(property);
+                if (reorderableList == null)
                 {
                     return 0;
                 }
 
-                return reorderableList.GetHeight();
+                return reorderableList.GetHeight() + 2.0f; // 2 pix space after the list
             }
 
-            return EditorGUI.GetPropertyHeight(property, true);
+            return EditorGUI.GetPropertyHeight(property, true) + 2.0f; // 2 pix space after the list
+        }
+
+        ReorderableList GetOrCreateList(SerializedProperty property)
+        {
+            string key = GetPropertyKeyName(property);
+
+            if (!_reorderableListsByPropertyName.TryGetValue(key, out var reorderableList))
+            {
+                reorderableList = new ReorderableListWrapper(property.serializedObject, property, true, true, true, true);
+                reorderableList.list.drawHeaderCallback = (Rect r) =>
+                    {
+                        //EditorGUI.LabelField(r, string.Format("{0}: {1}", PropertyUtility.GetLabel(property), property.arraySize), GetLabelStyle());
+                        HandleDragAndDrop(r, reorderableList.list);
+                        r.xMin += 10.0f;
+                        bool isExpanded = EditorGUI.Foldout(r, property.isExpanded, string.Format("{0}: {1}", PropertyUtility.GetLabel(property), property.arraySize), true, GetFoldoutStyle());
+                        if (property.isExpanded != isExpanded)
+                        {
+                            property.isExpanded = isExpanded;
+                            EditorUtility.SetDirty(property.serializedObject.targetObject);
+                        }
+                    };
+
+                reorderableList.list.drawElementCallback = (Rect r, int index, bool isActive, bool isFocused) =>
+                    {
+                        if (property.isExpanded)
+                            DrawElement(property, r, index, isActive, isFocused);
+                    };
+
+                reorderableList.list.elementHeightCallback = (int index) =>
+                    {
+                        if (!property.isExpanded)
+                            return (index == 0) ? EditorGUIUtility.singleLineHeight : 0.0f;
+
+                        if (property.arraySize > index)
+                        {
+                            SerializedProperty element = property.GetArrayElementAtIndex(index);
+                            return ListItemPropertyDrawer.Instance.GetPropertyHeight(element) + 2.0f; // height + 2 pix space between lines
+                        }
+
+                        return 0.0f;
+                    };
+
+                //reorderableList.list.drawFooterCallback = (Rect r) =>
+                //    {
+                //        if (Event.current.type == EventType.Repaint)
+                //        {
+                //            //ReorderableList.defaultBehaviours.footerBackground.Draw(r, false, false, false, false);
+                //            //ReorderableList.defaultBehaviours.boxBackground.Draw(r, false, false, false, false);
+                //        }
+
+                //        //if (displayAdd || displayRemove)
+                //            ReorderableList.defaultBehaviours.DrawFooter(r, reorderableList.list); // draw the footer if the add or remove buttons are required
+                //    };
+
+                _reorderableListsByPropertyName.Add(key, reorderableList);
+            }
+
+            return reorderableList.list;
         }
 
         protected override void OnGUI_Internal(Rect rect, SerializedProperty property, GUIContent label)
         {
             if (property.isArray)
             {
-                string key = GetPropertyKeyName(property);
-
-                ReorderableList reorderableList = null;
-                if (!_reorderableListsByPropertyName.ContainsKey(key))
-                {
-                    reorderableList = new ReorderableList(property.serializedObject, property, true, true, true, true)
-                    {
-                        drawHeaderCallback = (Rect r) =>
-                        {
-                            EditorGUI.LabelField(r, string.Format("{0}: {1}", label.text, property.arraySize), GetLabelStyle());
-                            HandleDragAndDrop(r, reorderableList);
-                        },
-
-                        drawElementCallback = (Rect r, int index, bool isActive, bool isFocused) =>
-                        {
-                            SerializedProperty element = property.GetArrayElementAtIndex(index);
-                            r.y += 1.0f;
-                            r.x += 10.0f;
-                            r.width -= 10.0f;
-
-                            EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), element, true);
-                        },
-
-                        elementHeightCallback = (int index) =>
-                        {
-                            return (property.arraySize == 0) ? 0 : EditorGUI.GetPropertyHeight(property.GetArrayElementAtIndex(index)) + 4.0f;
-                        }
-                    };
-
-                    _reorderableListsByPropertyName[key] = reorderableList;
-                }
-
-                reorderableList = _reorderableListsByPropertyName[key];
+                var reorderableList = GetOrCreateList(property);
 
                 if (rect == default)
-                {
                     reorderableList.DoLayoutList();
-                }
                 else
-                {
                     reorderableList.DoList(rect);
-                }
             }
             else
             {
@@ -101,8 +137,22 @@ namespace NaughtyAttributes.Editor
             }
         }
 
+        private void DrawElement(SerializedProperty property, Rect r, int index, bool isActive, bool isFocused)
+        {
+            if (property.arraySize > index)
+            {
+                SerializedProperty element = property.GetArrayElementAtIndex(index);
+                r.y += 1.0f;
+                r.x += 10.0f;
+                r.width -= 10.0f;
+                r.height -= 2.0f; // 2 pix spacing
+                ListItemPropertyDrawer.Instance.OnGUI(r, element);
+            }
+        }
+        
         public void ClearCache()
         {
+            ListItemPropertyDrawer.Instance.ClearCache();
             _reorderableListsByPropertyName.Clear();
         }
 
@@ -200,6 +250,31 @@ namespace NaughtyAttributes.Editor
             {
                 currentEvent.Use();
             }
+        }
+    }
+
+    internal class ReorderableListWrapper
+    {
+        public ReorderableList list;
+
+        public ReorderableListWrapper(IList elements, System.Type elementType)
+        {
+            list = new ReorderableList(elements, elementType);
+        }
+
+        public ReorderableListWrapper(IList elements, System.Type elementType, bool draggable, bool displayHeader, bool displayAddButton, bool displayRemoveButton)
+        {
+            list = new ReorderableList(elements, elementType, draggable, displayHeader, displayAddButton, displayRemoveButton);
+        }
+
+        public ReorderableListWrapper(SerializedObject serializedObject, SerializedProperty elements)
+        {
+            list = new ReorderableList(serializedObject, elements);
+        }
+
+        public ReorderableListWrapper(SerializedObject serializedObject, SerializedProperty elements, bool draggable, bool displayHeader, bool displayAddButton, bool displayRemoveButton)
+        {
+            list = new ReorderableList(serializedObject, elements, draggable, displayHeader, displayAddButton, displayRemoveButton);
         }
     }
 }

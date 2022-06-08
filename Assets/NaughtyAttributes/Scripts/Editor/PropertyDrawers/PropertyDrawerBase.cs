@@ -52,7 +52,14 @@ namespace NaughtyAttributes.Editor
 
         protected virtual float GetPropertyHeight_Internal(SerializedProperty property, GUIContent label)
         {
-            return EditorGUI.GetPropertyHeight(property, includeChildren: true);
+            try
+            {
+                return EditorGUI.GetPropertyHeight(property, includeChildren: true);
+            }
+            catch (System.ArgumentException ex)
+            {
+                return EditorGUIUtility.singleLineHeight;
+            }
         }
 
         protected float GetPropertyHeight(SerializedProperty property)
